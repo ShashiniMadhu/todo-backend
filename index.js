@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors'); // Add this import
 const app = express();
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
@@ -8,6 +9,17 @@ const bcrypt = require('bcryptjs');
 const PORT = process.env.PORT || 8080;
 const MONGOURL = process.env.MONGOURL;
 
+// Configure CORS - Add this before other middleware
+app.use(cors({
+    origin: [
+        'http://localhost:3000', // For local development
+        'https://todo-frontend-31e5.onrender.com' // Your deployed frontend URL
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 // console.log('Connecting to MongoDB:', process.env.MONGOURL);
@@ -15,7 +27,6 @@ app.use(express.json());
 mongoose.connect(process.env.MONGOURL)
     .then(() => console.log("✅ Connected to MongoDB Atlas"))
     .catch((err) => console.error("❌ MongoDB connection error:", err));
-
 
 const userSchema = new mongoose.Schema({
     username: String,
@@ -48,7 +59,6 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        // Fixed: was "await_User" instead of "await User"
         const user = await User.findOne({ username: username });
         
         if (!user || !(await bcrypt.compare(password, user.password))) {
@@ -63,13 +73,11 @@ app.post('/login', async (req, res) => {
 });
 
 const authMiddleware = (req, res, next) => {
-    // Fixed: headers is a property, not a function
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
         return res.status(401).json({ message: 'Unauthorized' });
     }
     try {
-        // Fixed: was "decose" instead of "decode", and use process.env.JWT_SECRET
         const decode = jwt.verify(token, process.env.JWT_SECRET);
         req.userId = decode.userId;
         next();
@@ -79,7 +87,6 @@ const authMiddleware = (req, res, next) => {
 };
 
 // Create a new task for the authenticated user
-// Fixed: added authMiddleware to protect the route
 app.post('/tasks', authMiddleware, async (req, res) => {
     try {
         const task = new Task({ ...req.body, userId: req.userId });
@@ -90,7 +97,7 @@ app.post('/tasks', authMiddleware, async (req, res) => {
     }
 });
 
-//Get all tasks for the authenticated user
+// Get all tasks for the authenticated user
 app.get('/tasks', authMiddleware, async (req, res) => {
     try {
         const tasks = await Task.find({ userId: req.userId });
@@ -100,22 +107,23 @@ app.get('/tasks', authMiddleware, async (req, res) => {
     }
 });
 
-
-//Delete a task by ID for the authenticated user
-// Fixed: added authMiddleware to protect the route
+// Delete a task by ID for the authenticated user
 app.delete("/tasks/:id", authMiddleware, async (req, res) => {
-    await Task.findOneAndDelete({ _id: req.params.id, userId: req.userId });
-    res.json({ message: 'Task deleted successfully' });
+    try {
+        await Task.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+        res.json({ message: 'Task deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Delete failed', error: error.message });
+    }
 });
 
 // Update a task by ID for the authenticated user
-// Fixed: added authMiddleware to protect the route
-app.put("/tasks/:id", authMiddleware, async (req, res) => {
+app.put("/tasks/:id/status", authMiddleware, async (req, res) => {
     const { status } = req.body;
 
     try {
         const task = await Task.findOneAndUpdate(
-            { _id: req.params.id, userId: req.userId }, // ✅ Correct way to match task and user
+            { _id: req.params.id, userId: req.userId },
             { status },
             { new: true }
         );
@@ -131,18 +139,21 @@ app.put("/tasks/:id", authMiddleware, async (req, res) => {
 });
 
 // Update task priority by ID for the authenticated user
-// Fixed: added authMiddleware to protect the route
 app.patch("/tasks/:id/priority", authMiddleware, async (req, res) => {
-    const { priority } = req.body;
-    const task = await Task.findByIdAndUpdate(
-        { _id: req.params.id, userId: req.userId },
-        { priority },
-        { new: true }
-    );
-    if (!task) {
-        return res.status(404).json({ message: 'Task not found' });
+    try {
+        const { priority } = req.body;
+        const task = await Task.findOneAndUpdate(
+            { _id: req.params.id, userId: req.userId },
+            { priority },
+            { new: true }
+        );
+        if (!task) {
+            return res.status(404).json({ message: 'Task not found' });
+        }
+        res.json(task);
+    } catch (error) {
+        res.status(500).json({ message: 'Priority update failed', error: error.message });
     }
-    res.json(task);
 });
 
 app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
